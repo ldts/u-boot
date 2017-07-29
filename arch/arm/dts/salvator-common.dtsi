@@ -589,6 +589,11 @@
 	};
 };
 
+&rpc {
+	reg = <0 0xee200000 0 0x100>, <0 0x08000000 0 0x04000000>;
+	status = "okay";
+};
+
 &scif1 {
 	pinctrl-0 = <&scif1_pins>;
 	pinctrl-names = "default";
