@@ -13,10 +13,13 @@
 #include <asm/arch/iomux.h>
 #include <asm/mach-imx/boot_mode.h>
 #include <asm/gpio.h>
+#include <fs.h>
 #include <usb.h>
 #include <dm.h>
+#include <spi_flash.h>
 
 DECLARE_GLOBAL_DATA_PTR;
+
 
 #define UART_PAD_CTRL	(PAD_CTL_PUS_UP)
 #define QSPI_PAD_CTRL1	(PAD_CTL_PUS_UP | PAD_CTL_DSE)
@@ -87,6 +90,191 @@ int board_early_init_f(void)
 	return 0;
 }
 
+/* TODO: optee smc calls */
+static int optee_get_hash(uint8_t *tee_hash, int *tee_hash_len)
+{
+	return -EINVAL;
+}
+
+static void optee_update_hash(uint8_t *fit_hash, int fit_len)
+{
+
+}
+
+static int m4_do_upgrade(char *data, size_t size,
+			  uint8_t *fit_hash_value, int fit_hash_len)
+
+{
+	struct spi_flash *flash;
+	u32 tag;
+
+	/* We assume the M4 image has IVT head and padding which
+	 * should be same as the one programmed into QSPI flash
+	 */
+	if (size < 0x4096) {
+		printf("M4 Image size too small (%d)!\n", size);
+		return -EINVAL;
+	}
+
+	printf("M4 Image Size %d\n", size);
+
+	/* check firmware tags */
+	tag = *(u32 *)(data + 4096);
+	if (tag != 0x402000d1 && tag !=0x412000d1) {
+		printf("Invalid M4 image: tag=0x%x\n", tag);
+		return -EINVAL;
+	}
+
+	flash = spi_flash_probe(CONFIG_ENV_SPI_BUS, CONFIG_ENV_SPI_CS,
+				CONFIG_ENV_SPI_MAX_HZ, CONFIG_ENV_SPI_MODE);
+	if (!flash) {
+		printf("Failed to probe spi_flash\n");
+		return -EINVAL;
+	}
+
+	if (spi_flash_erase(flash, 0, 20000))
+		printf("Failed to erase spi flash\n");
+
+	if (spi_flash_write(flash, 0, size, data)) {
+		printf("Failed to write image to spi flash\n");
+		return -EIO;
+	}
+
+	printf("M4 Firmware Upgraded\n");
+	optee_update_hash(fit_hash_value, fit_hash_len);
+
+	/* TODO: release the flash too boot at this point */
+
+	return 0;
+}
+
+
+static int m4_upgrade_required(uint8_t *fit_hash, int fit_len)
+{
+	uint8_t tee_hash[FIT_MAX_HASH_LEN];
+	int tee_hash_len = -1;
+
+	if (optee_get_hash(tee_hash, &tee_hash_len))
+		return false;
+
+	if (tee_hash_len != fit_len || memcmp(tee_hash, fit_hash, fit_len))
+		return true;
+
+	return false;
+}
+
+
+static int process_m4_hash(const void *fit, const int image_noffset)
+{
+	uint8_t *fit_value;
+	int fit_value_len;
+	const void *data;
+	int noffset = 0;
+	size_t size;
+	int i;
+
+	fdt_for_each_subnode(noffset, fit, image_noffset) {
+		const char *name = fit_get_name(fit, noffset, NULL);
+		if (!strncmp(name, FIT_HASH_NODENAME,
+			     strlen(FIT_HASH_NODENAME)))
+			goto process_m4_hash;
+	}
+
+	return -EINVAL;
+
+process_m4_hash:
+
+	if (fit_image_hash_get_value(fit, noffset, &fit_value, &fit_value_len)) {
+		printf("Can't get hash value property");
+		return -EINVAL;
+	}
+
+	printf("M4 Hash: ");
+	for (i = 0; i < fit_value_len; i++)
+		printf("%x", fit_value[i]);
+	printf("\n");
+
+	if (m4_upgrade_required(fit_value, fit_value_len) == false) {
+		printf("M4 upgrade not required\n");
+		return 0;
+	}
+
+	if (fit_image_get_data_and_size(fit, image_noffset, &data, &size)) {
+		printf("Can't get M4 image data and size\n");
+		return -EINVAL;
+	}
+
+	return m4_do_upgrade((char *) data, size, fit_value, fit_value_len);
+}
+
+static int process_m4_node(const void *fit)
+{
+	int images_noffset;
+	const char *name;
+	int noffset;
+	int ndepth;
+	int count;
+
+	images_noffset = fdt_path_offset(fit, FIT_IMAGES_PATH);
+	if (images_noffset < 0) {
+		printf("Can't find images parent node '%s' (%s)\n",
+		       FIT_IMAGES_PATH, fdt_strerror(images_noffset));
+		return 0;
+	}
+
+	for (ndepth = 0, count = 0,
+	     noffset = fdt_next_node(fit, images_noffset, &ndepth);
+			(noffset >= 0) && (ndepth > 0);
+			noffset = fdt_next_node(fit, noffset, &ndepth)) {
+
+		if (ndepth == 1) {
+			name = fit_get_name(fit, noffset, NULL);
+			if (!strncmp(name, "m4", 2)) {
+				printf("## Checking hash for M4 Upgrade...\n");
+				return process_m4_hash(fit, noffset);
+			}
+ 			count++;
+		}
+	}
+
+	return -EINVAL;
+}
+
+/* TODO: how to select the vmlinuz from ostree */
+static void process_m4_upgrade(void)
+{
+	void *hdr = (void *) CONFIG_SYS_LOAD_ADDR;
+	char buffer[12];
+	char *const cmd[] = {
+		"ext4load",
+		"mmc",
+		"0:2",
+		buffer,
+		"boot/ostree/lmp-5bb9917534ead07e2db1754c4c95f5a195e6e96177455214bedd1241b134b274/vmlinuz",
+	};
+
+	snprintf(buffer, 12, "0x%x", CONFIG_SYS_LOAD_ADDR);
+
+	if (do_load(NULL, 0, 5, cmd, FS_TYPE_EXT)) {
+		printf("Failed to load image\n");
+		return;
+	}
+
+	if (genimg_get_format(hdr) != IMAGE_FORMAT_FIT) {
+		printf("Invalid image format\n");
+		return;
+	}
+
+	if (!fit_check_format(hdr)) {
+		printf("bad FIT image format\n");
+		return;
+	}
+
+	if (process_m4_node(hdr))
+		puts("Bad hash in FIT image!\n");
+}
+
+
 int board_init(void)
 {
 	/* address of boot parameters */
@@ -95,6 +283,7 @@ int board_init(void)
 #ifdef CONFIG_FSL_QSPI
 	board_qspi_init();
 #endif
+	process_m4_upgrade();
 
 	return 0;
 }
