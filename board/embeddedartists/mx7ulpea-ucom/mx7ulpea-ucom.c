@@ -15,12 +15,17 @@
 #include <asm/gpio.h>
 #include <usb.h>
 #include <dm.h>
+#include <../lib/libavb/libavb.h>
+#include <tee/optee_ta_avb.h>
+#include <avb_verify.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
 #define UART_PAD_CTRL	(PAD_CTL_PUS_UP)
 #define QSPI_PAD_CTRL1	(PAD_CTL_PUS_UP | PAD_CTL_DSE)
 #define OTG_ID_GPIO_PAD_CTRL	(PAD_CTL_IBE_ENABLE)
+
+static struct AvbOps *avb_ops;
 
 int dram_init(void)
 {
@@ -89,12 +94,27 @@ int board_early_init_f(void)
 
 int board_init(void)
 {
+	const char *name = "test";
+	const char *value = "1234567890";
+
 	/* address of boot parameters */
 	gd->bd->bi_boot_params = PHYS_SDRAM + 0x100;
 
 #ifdef CONFIG_FSL_QSPI
 	board_qspi_init();
 #endif
+	avb_ops = avb_ops_alloc(0);
+	if (!avb_ops)
+		return -EINVAL;
+
+	if (avb_ops->write_persistent_value(avb_ops, name, strlen(value) + 1,
+					    (const uint8_t *)value) ==
+	    AVB_IO_RESULT_OK) {
+		printf("tee: wrote %zu bytes\n", strlen(value) + 1);
+	} else
+		printf("Failed to write persistent value\n");
+
+	avb_ops_free(avb_ops);
 
 	return 0;
 }
