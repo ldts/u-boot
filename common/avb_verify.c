@@ -356,7 +356,7 @@ static struct mmc_part *get_partition(AvbOps *ops, const char *partition)
 	if (!part)
 		return NULL;
 
-	dev_num = get_boot_device(ops);
+	dev_num = avb_get_boot_device(ops);
 	part->mmc = find_mmc_device(dev_num);
 	if (!part->mmc) {
 		printf("No MMC device at slot %x\n", dev_num);
