@@ -97,7 +97,7 @@ static inline bool is_buf_unaligned(void *buffer)
 	return (bool)((uintptr_t)buffer % ALLOWED_BUF_ALIGN);
 }
 
-static inline int get_boot_device(AvbOps *ops)
+static inline int avb_get_boot_device(AvbOps *ops)
 {
 	struct AvbOpsData *data;
 
