@@ -285,6 +285,11 @@ static unsigned long mmc_read_and_flush(struct mmc_part *part,
 		printf("Handling unaligned read buffer..\n");
 		tmp_buf = get_sector_buf();
 		buf_size = get_sector_buf_size();
+		if (!buf_size) {
+			printf("Cant handle unaligned read buffers, "
+			       "please configure FASTBOOT or provide a buffer\n");
+			return -EIO;
+		}
 		if (sectors > buf_size / part->info.blksz)
 			sectors = buf_size / part->info.blksz;
 	} else {
@@ -321,6 +326,11 @@ static unsigned long mmc_write(struct mmc_part *part, lbaint_t start,
 	if (unaligned) {
 		tmp_buf = get_sector_buf();
 		buf_size = get_sector_buf_size();
+		if (!buf_size) {
+			printf("Cant handle unaligned write buffers, "
+			       "please configure FASTBOOT or provide a buffer\n");
+			return -EIO;
+		}
 		printf("Handling unaligned wrire buffer..\n");
 		if (sectors > buf_size / part->info.blksz)
 			sectors = buf_size / part->info.blksz;

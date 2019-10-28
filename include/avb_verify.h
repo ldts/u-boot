@@ -70,6 +70,7 @@ static inline uint64_t calc_offset(struct mmc_part *part, int64_t offset)
 	return offset;
 }
 
+#if defined (CONFIG_FASTBOOT_BUF_SIZE) && defined(CONFIG_FASTBOOT_BUF_ADDR)
 static inline size_t get_sector_buf_size(void)
 {
 	return (size_t)CONFIG_FASTBOOT_BUF_SIZE;
@@ -79,6 +80,17 @@ static inline void *get_sector_buf(void)
 {
 	return map_sysmem(CONFIG_FASTBOOT_BUF_ADDR, CONFIG_FASTBOOT_BUF_SIZE);
 }
+#else
+static inline size_t get_sector_buf_size(void)
+{
+	return (size_t) 0;
+}
+
+static inline void *get_sector_buf(void)
+{
+	return NULL;
+}
+#endif
 
 static inline bool is_buf_unaligned(void *buffer)
 {
