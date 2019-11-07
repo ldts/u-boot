@@ -17,6 +17,8 @@
 #include "imx7ulp_spl.h"
 #endif
 
+#define CONFIG_FPGA
+
 #define CONFIG_BOARD_POSTCLK_INIT
 #define CONFIG_SYS_BOOTM_LEN		0x1000000
 
