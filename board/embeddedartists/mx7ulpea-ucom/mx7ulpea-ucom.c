@@ -19,6 +19,9 @@
 #include <spi_flash.h>
 #include <fpga.h>
 #include <mtd.h>
+#include <../lib/libavb/libavb.h>
+#include <tee/optee_ta_avb.h>
+#include <avb_verify.h>
 #include <stdlib.h>
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -30,6 +33,14 @@ enum m4_fw_state {m4_fw_boot, m4_fw_abort, m4_fw_upgrade};
 struct hash {
 	uint8_t value[FIT_MAX_HASH_LEN];
 	int len;
+};
+
+/* the TEE needs to store the payload length so we can recalculate the sha
+ * before booting from flash
+ */
+struct sec_hash {
+	struct hash hash;
+	int payload_len;
 };
 
 #define UART_PAD_CTRL	(PAD_CTL_PUS_UP)
@@ -113,8 +124,162 @@ void print_hash(char *msg, struct hash *hash)
 
 }
 
+void print_secure_hash(char *msg, struct sec_hash *sec)
+{
+	print_hash(msg, sec->hash);
+	printf("\t payload_len : 0x%x\n", sec->payload_len);
+}
 #else
 void print_hash(char *msg, struct hash *hash){}
+void print_secure_hash(char *msg, struct sec_hash *sec){}
+#endif
+
+#if !defined(CONFIG_OPTEE)
+static struct sec_hash t_hash;
+
+static int get_secure_hash(struct sec_hash *sec)
+{
+	if (t_hash.hash.len) {
+		memcpy(sec->hash.value, t_hash.hash.value, t_hash.hash.len);
+		sec->hash.len = t_hash.hash.len;
+		sec->payload_len = t_hash.payload_len;
+	}
+
+	return 0;
+}
+
+static int update_secure_hash(struct hash *hash, int payload_len)
+{
+	int i;
+
+	/* stub code */
+	if (t_hash.hash.len) {
+		printf("M4: secure hash already updated, update rejected");
+		return -1;
+	}
+
+	t_hash.hash.len = hash->len;
+	t_hash.payload_len = payload_len;
+	memcpy(t_hash.hash.value, hash->value, t_hash.hash.len);
+
+	print_secure_hash("M4: secure hash update:", &t_hash);
+
+	return 0;
+}
+
+#else
+static struct AvbOps *sec;
+static int atoi(char* str)
+{
+    int res = 0;
+
+    /* WARNING: use only with decimal type strings */
+    for (int i = 0; str[i] != '\0'; ++i)
+        res = res * 10 + str[i] - '0';
+
+    return res;
+}
+
+static inline int secure_read_char(char *name, char *value,
+				   size_t *len, size_t buf_len)
+{
+	int ret;
+
+	ret = sec->read_persistent_value(sec, name, buf_len,
+					 (uint8_t *) value, len);
+	if (ret == AVB_IO_RESULT_OK) {
+		debug("tee: read %s (bytes %d)\n", name, *len);
+		return 0;
+	}
+	printf("Failed to read persistent value %s\n", name);
+
+	return -EIO;
+}
+
+static inline int secure_read_int(char *name, int *value)
+{
+	char len_str[32] = { '\0' };
+	size_t len;
+	int ret;
+
+	ret = sec->read_persistent_value(sec, name, sizeof(len_str),
+					 (uint8_t *) len_str, &len);
+	if (ret == AVB_IO_RESULT_OK) {
+		debug("tee: read %s (bytes %d, value = %d )\n",
+		       name, len, atoi(len_str));
+		*value = atoi(len_str);
+		return 0;
+	}
+	printf("Failed to read persistent value %s\n", name);
+
+	return -EIO;
+}
+
+static inline int secure_write_char(char *name, char *value, size_t len)
+{
+	int ret;
+
+	ret = sec->write_persistent_value(sec, name, len, (uint8_t *) value);
+	if (ret == AVB_IO_RESULT_OK) {
+		debug("tee: wrote %s (bytes %d)\n", name, len);
+		return 0;
+	}
+	printf("Failed to write persistent value %s\n", name);
+
+	return -EIO;
+}
+
+static inline int secure_write_int(char *name, int value)
+{
+	char len_str[32] = { '\0' };
+	int ret;
+
+	snprintf(len_str, sizeof(len_str), "%d", value);
+	ret = sec->write_persistent_value(sec, name, strlen(len_str) + 1,
+					  (uint8_t *) len_str);
+	if (ret == AVB_IO_RESULT_OK) {
+		debug("tee: wrote %s (bytes %d, value = %d)\n", name,
+		       strlen(len_str) + 1, value);
+		return 0;
+	}
+	printf("Failed to write persistent value %s\n", name);
+
+	return -EIO;
+}
+
+static int get_secure_hash(struct sec_hash *sec_hash)
+{
+	int ret;
+
+	ret = secure_read_char("m4hash", (char *) sec_hash->hash.value,
+			       (size_t *) &sec_hash->hash.len,
+			       sizeof(sec_hash->hash.value));
+	if (ret)
+		return ret;
+
+	ret = secure_read_int("m4size", &sec_hash->payload_len);
+	if (ret)
+		return ret;
+
+	print_secure_hash("M4: Retrieved Secure hash", sec_hash);
+
+	return 0;
+}
+
+static int update_secure_hash(struct hash *hash, int len)
+{
+	int ret;
+
+	ret = secure_write_char("m4hash", (char *) hash->value, hash->len);
+	if (ret)
+		return ret;
+
+	ret = secure_write_int("m4size", len);
+	if (ret)
+		return ret;
+
+	return ret;
+}
 #endif
 
 #if defined(CONFIG_FPGA)
@@ -136,6 +301,11 @@ static int m4_do_upgrade(struct spi_flash *flash, const void *data,
 		return -EIO;
 	}
 
+	if (update_secure_hash(hash, size)) {
+		printf("M4: Failed to update the secure hash\n");
+		return -EIO;
+	}
+
 	printf("M4: Firmware upgraded from FIT...\n");
 
 	return 0;
@@ -144,10 +314,11 @@ static int m4_do_upgrade(struct spi_flash *flash, const void *data,
 static int m4_get_state(struct spi_flash **flash, const void *data, size_t size,
 		        struct hash *hash, enum m4_fw_state *action)
 {
-
-	struct hash installed_hash;
-	struct mtd_info *mtd;
-	size_t len;
+	struct sec_hash sec_hash = {
+		.hash.len = 1,
+		.payload_len = 0,
+	};
+	int retry = 1;
 
 	/* assume validation error */
 	*action = m4_fw_abort;
@@ -160,15 +331,12 @@ static int m4_get_state(struct spi_flash **flash, const void *data, size_t size,
 		return -EIO;
 	}
 
-	mtd = &(*flash)->mtd;
-
-	/* 2) validate size */
 	if (size < 0x2000) {
 		printf("M4: Image size too small (%d < 0x2000)!\n", size);
 		return -EINVAL;
 	}
 
-	/* 3) check firmware for valid tags: assume the M4 image has IVT head
+	/* 2) check firmware for valid tags: assume the M4 image has IVT head
 	 * and padding which should be the same as the one programmed into
 	 * QSPI flash
 	 */
@@ -177,46 +345,49 @@ static int m4_get_state(struct spi_flash **flash, const void *data, size_t size,
 		return -EINVAL;
 	}
 
-	/* 4) validate FIT hash against currently installed fw hash */
+	/* 3) validate firmware hash against secure hash */
 	if (calculate_hash(data, size, "sha256",
 			   hash->value, &hash->len)) {
 		printf("M4: unsupported hash algorithm to decode bistream\n");
 		return -EINVAL;
 	}
 
-	len = round_up(size, mtd->writesize);
-	if (spi_flash_read(*flash, 0, len, (void *) M4_BASE)) {
-		printf("M4: Failed to read from flash, can't boot\n");
-		return -EIO;
+retry_hash:
+	if (get_secure_hash(&sec_hash)) {
+		if (!retry--) {
+			printf("M4: TA not accessible, abort\n");
+			return -EIO;
+		}
+
+		/* first boot or keys corrupted, clean and retry  */
+		update_secure_hash(&sec_hash.hash, sec_hash.payload_len);
+		goto retry_hash;
 	}
 
-	if (calculate_hash((void *) M4_BASE, size, "sha256",
-			   installed_hash.value, &installed_hash.len)) {
-		printf("M4: unsupported hash algorithm to decode bistream\n");
-		return -EINVAL;
-	}
-
-	if (installed_hash.len != hash->len ||
-	    memcmp(installed_hash.value, hash->value, hash->len)) {
+	if (sec_hash.hash.len != hash->len ||
+	    memcmp(sec_hash.hash.value, hash->value, hash->len)) {
 		/* current firmware differs from requested firmware, upgrade */
 		if (get_boot_mode() == DUAL_BOOT) {
 			printf("M4: Invalid Boot Mode\n");
 			return -EINVAL;
 		}
-		print_hash("Current FW Hash", &installed_hash);
-		print_hash("New FIT FW Hash", hash);
 		*action = m4_fw_upgrade;
 	} else {
 		/* current firmware matches requested firmware, boot it */
 		*action = m4_fw_boot;
 	}
 
+	print_hash("M4: Firmware hash", hash);
+	print_hash("M4: Secure hash", &sec_hash.hash);
+
 	return 0;
 }
 
 static int m4_boot(struct spi_flash *flash, size_t size, struct hash *p)
 {
-	struct mtd_info *mtd = &flash->mtd;
+	struct mtd_info *mtd = 	&flash->mtd;
+	struct sec_hash sec_hash;
+	struct hash hash;
 	int ret = 0;
 	size_t len;
 
@@ -226,7 +397,29 @@ static int m4_boot(struct spi_flash *flash, size_t size, struct hash *p)
 		return 0;
 	}
 
-	len = round_up(size, mtd->writesize);
+	/* 1) read the secure hash */
+	if (get_secure_hash(&sec_hash)) {
+		printf("M4: cant boot, TEE not accessible\n");
+		ret = -EIO;
+		goto error;
+	}
+
+	/* 2) validate it against the known value */
+	if (p->len != sec_hash.hash.len ||
+	    size != sec_hash.payload_len ||
+	    memcmp(p->value, sec_hash.hash.value, p->len)) {
+		printf("M4: secure hash corrupted\n");
+
+		print_hash("M4: Firmware hash", p);
+		debug("M4: Firmware load_len (%d)\n", size);
+		print_secure_hash("M4: Secure hash", &sec_hash);
+
+		ret = -EIO;
+		goto error;
+	}
+
+	/* 3) validate it against the installed image  */
+	len = round_up(sec_hash.payload_len, mtd->writesize);
 	if (spi_flash_read(flash, 0, len, (void *) M4_BASE)) {
 		printf("M4: Failed to read from flash, can't boot\n");
 		ret = -EIO;
@@ -235,9 +428,26 @@ static int m4_boot(struct spi_flash *flash, size_t size, struct hash *p)
 
 	debug("\tM4 Entry: 0x%x\n", M4_ENTRY(M4_BASE));
 	debug("\tM4 Sram : 0x%x\n", M4_BASE);
-	debug("\tM4 Size : 0x%x\n", size);
+	debug("\tM4 Size : 0x%x\n", sec_hash.payload_len);
 
-	printf("M4 Firmware hash validated, booting\n");
+	/* calculate the installed image hash */
+	if (calculate_hash((const void *) M4_BASE, sec_hash.payload_len,
+			   "sha256", hash.value, &hash.len)) {
+		printf("M4: cant boot, unsupported hash algorithm (sha256)\n");
+		ret = -EINVAL;
+		goto error;
+	}
+
+	/* do not boot if the installed image is corrupted */
+	if (hash.len != sec_hash.hash.len ||
+	    memcmp(hash.value, sec_hash.hash.value, sec_hash.hash.len)) {
+		printf("M4: cant boot, invalid hash %s in firmware or tee\n",
+			hash.len != sec_hash.hash.len ? "length" : "value");
+		ret = -ENOEXEC;
+		goto error;
+	}
+
+	printf("M4: Hash OK, booting\n");
 	writel(M4_ENTRY(M4_BASE), SIM0_RBASE + 0x70);
 
 	return 0;
@@ -265,6 +475,13 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 	struct hash hash;
 	int ret;
 
+#if defined(CONFIG_OPTEE)
+	sec = avb_ops_alloc(0);
+	if (!sec) {
+		printf("M4: cant allocate secure operations, rollback\n");
+		return -EIO;
+	}
+#endif
 	ret = m4_get_state(&flash, data, size, &hash, &action);
 	switch (action) {
 	case m4_fw_abort:
@@ -274,7 +491,7 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 		printf("M4: already installed, booting\n");
 		break;
 	case m4_fw_upgrade:
-		printf("M4: starting upgrade\n");
+		printf("M4: begin software upgrade\n");
 		ret = m4_do_upgrade(flash, data, size, &hash);
 		if (ret) {
 			printf("M4: upgrade failed, rollback\n");
@@ -283,9 +500,12 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 		break;
 	}
 
-	/* boot the M4 stored in QSPI */
+	/* boot the M4 stored in QSPI: the TA stored hash must match */
 	ret = m4_boot(flash, size, &hash);
 
+#if defined(CONFIG_OPTEE)
+	avb_ops_free(sec);
+#endif
 	return ret;
 }
 #endif
