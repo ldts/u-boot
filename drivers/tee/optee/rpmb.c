@@ -98,7 +98,6 @@ static struct mmc *get_mmc(struct optee_private *priv, int dev_id)
 static u32 rpmb_get_dev_info(u16 dev_id, struct rpmb_dev_info *info)
 {
 	struct mmc *mmc = find_mmc_device(dev_id);
-	int i;
 
 	if (!mmc)
 		return TEE_ERROR_ITEM_NOT_FOUND;
@@ -106,9 +105,7 @@ static u32 rpmb_get_dev_info(u16 dev_id, struct rpmb_dev_info *info)
 	if (!mmc->ext_csd)
 		return TEE_ERROR_GENERIC;
 
-	for (i = 0; i < ARRAY_SIZE(mmc->cid); i++)
-		((u32 *) info->cid)[i] = be32_to_cpu(mmc->cid[i]);
-
+	memcpy(info->cid, mmc->cid, sizeof(info->cid));
 	info->rel_wr_sec_c = mmc->ext_csd[222];
 	info->rpmb_size_mult = mmc->ext_csd[168];
 	info->ret_code = RPMB_CMD_GET_DEV_INFO_RET_OK;
