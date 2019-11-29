@@ -49,7 +49,7 @@ obj-$(CONFIG_SYSCOUNTER_TIMER) += syscounter.o
 endif
 ifeq ($(SOC),$(filter $(SOC),mx7ulp))
 obj-y  += cache.o
-obj-$(CONFIG_IMX_HAB) += hab.o
+obj-$(CONFIG_IMX_HAB) += hab.o fiohab.o
 endif
 ifeq ($(SOC),$(filter $(SOC),vf610))
 obj-y += ddrmc-vf610.o
