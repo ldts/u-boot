@@ -73,51 +73,6 @@ static fiovb_io_result invoke_func(struct fiovb_ops_data *ops_data, u32 func,
 	}
 }
 
-static fiovb_io_result read_rollback_index(struct fiovb_ops *ops,
-				           size_t rollback_index_slot,
-				           u64 *out_rollback_index)
-{
-	fiovb_io_result rc;
-	struct tee_param param[2];
-
-	if (rollback_index_slot >= TA_FIOVB_MAX_ROLLBACK_LOCATIONS)
-		return FIOVB_IO_RESULT_ERROR_NO_SUCH_VALUE;
-
-	memset(param, 0, sizeof(param));
-	param[0].attr = TEE_PARAM_ATTR_TYPE_VALUE_INPUT;
-	param[0].u.value.a = rollback_index_slot;
-	param[1].attr = TEE_PARAM_ATTR_TYPE_VALUE_OUTPUT;
-
-	rc = invoke_func(ops->user_data, TA_FIOVB_CMD_READ_ROLLBACK_INDEX,
-			 ARRAY_SIZE(param), param);
-	if (rc)
-		return rc;
-
-	*out_rollback_index = (u64)param[1].u.value.a << 32 |
-			      (u32)param[1].u.value.b;
-	return FIOVB_IO_RESULT_OK;
-}
-
-static fiovb_io_result write_rollback_index(struct fiovb_ops *ops,
-					    size_t rollback_index_slot,
-					    u64 rollback_index)
-{
-	struct tee_param param[2];
-
-	if (rollback_index_slot >= TA_FIOVB_MAX_ROLLBACK_LOCATIONS)
-		return FIOVB_IO_RESULT_ERROR_NO_SUCH_VALUE;
-
-	memset(param, 0, sizeof(param));
-	param[0].attr = TEE_PARAM_ATTR_TYPE_VALUE_INPUT;
-	param[0].u.value.a = rollback_index_slot;
-	param[1].attr = TEE_PARAM_ATTR_TYPE_VALUE_INPUT;
-	param[1].u.value.a = (u32)(rollback_index >> 32);
-	param[1].u.value.b = (u32)rollback_index;
-
-	return invoke_func(ops->user_data, TA_FIOVB_CMD_WRITE_ROLLBACK_INDEX,
-			   ARRAY_SIZE(param), param);
-}
-
 static fiovb_io_result read_persistent_value(struct fiovb_ops *ops,
 					     const char *name,
 					     size_t buffer_size,
@@ -246,8 +201,6 @@ struct fiovb_ops *fiovb_ops_alloc(int boot_device)
 
 	ops_data->ops.user_data = ops_data;
 
-	ops_data->ops.read_rollback_index = read_rollback_index;
-	ops_data->ops.write_rollback_index = write_rollback_index;
 	ops_data->ops.write_persistent_value = write_persistent_value;
 	ops_data->ops.read_persistent_value = read_persistent_value;
 	ops_data->mmc_dev = boot_device;

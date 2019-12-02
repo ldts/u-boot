@@ -34,57 +34,6 @@ int do_fiovb_init(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_FAILURE;
 }
 
-int do_fiovb_read_rb(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
-{
-	size_t index;
-	u64 rb_idx;
-
-	if (!fiovb_ops) {
-		printf("Foundries.IO Verified Boot is not initialized, run 'fiovb init' first\n");
-		return CMD_RET_FAILURE;
-	}
-
-	if (argc != 2)
-		return CMD_RET_USAGE;
-
-	index = (size_t)simple_strtoul(argv[1], NULL, 16);
-
-	if (fiovb_ops->read_rollback_index(fiovb_ops, index, &rb_idx) ==
-	    FIOVB_IO_RESULT_OK) {
-		printf("Rollback index: %llx\n", rb_idx);
-		return CMD_RET_SUCCESS;
-	}
-
-	printf("Failed to read rollback index\n");
-
-	return CMD_RET_FAILURE;
-}
-
-int do_fiovb_write_rb(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
-{
-	size_t index;
-	u64 rb_idx;
-
-	if (!fiovb_ops) {
-		printf("Foundries.IO Verified Boot is not initialized, run 'fiovb init' first\n");
-		return CMD_RET_FAILURE;
-	}
-
-	if (argc != 3)
-		return CMD_RET_USAGE;
-
-	index = (size_t)simple_strtoul(argv[1], NULL, 16);
-	rb_idx = simple_strtoull(argv[2], NULL, 16);
-
-	if (fiovb_ops->write_rollback_index(fiovb_ops, index, rb_idx) ==
-	    FIOVB_IO_RESULT_OK)
-		return CMD_RET_SUCCESS;
-
-	printf("Failed to write rollback index\n");
-
-	return CMD_RET_FAILURE;
-}
-
 int do_fiovb_read_pvalue(cmd_tbl_t *cmdtp, int flag, int argc,
 		         char * const argv[])
 {
@@ -157,8 +106,6 @@ int do_fiovb_write_pvalue(cmd_tbl_t *cmdtp, int flag, int argc,
 
 static cmd_tbl_t cmd_fiovb[] = {
 	U_BOOT_CMD_MKENT(init, 2, 0, do_fiovb_init, "", ""),
-	U_BOOT_CMD_MKENT(read_rb, 2, 0, do_fiovb_read_rb, "", ""),
-	U_BOOT_CMD_MKENT(write_rb, 3, 0, do_fiovb_write_rb, "", ""),
 	U_BOOT_CMD_MKENT(read_pvalue, 3, 0, do_fiovb_read_pvalue, "", ""),
 	U_BOOT_CMD_MKENT(write_pvalue, 3, 0, do_fiovb_write_pvalue, "", ""),
 };
@@ -183,10 +130,9 @@ static int do_fiovb(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 
 U_BOOT_CMD(
 	fiovb, 29, 0, do_fiovb,
-	"Provides commands for testing Foundries.IO verified boot functionality",
+	"Provides commands for testing Foundries.IO verified boot functionality"
+	" - supported value names: m4hash, bootcount and rollback",
 	"init <dev> - initialize fiovb for <dev>\n"
-	"fiovb read_rb <num> - read rollback index at location <num>\n"
-	"fiovb write_rb <num> <rb> - write rollback index <rb> to <num>\n"
-	"fiovb read_pvalue <name> <bytes> - read a persistent value <name>\n"
-	"fiovb write_pvalue <name> <value> - write a persistent value <name>\n"
+	"read_pvalue <name> <bytes> - read a persistent value <name>\n"
+	"write_pvalue <name> <value> - write a persistent value <name>\n"
 	);

@@ -34,14 +34,6 @@ struct fiovb_ops {
 
   void* user_data;
 
-  fiovb_io_result (*read_rollback_index)(struct fiovb_ops* ops,
-                                         size_t rollback_index_location,
-                                         uint64_t* out_rollback_index);
-
-  fiovb_io_result (*write_rollback_index)(struct fiovb_ops* ops,
-                                          size_t rollback_index_location,
-                                          uint64_t rollback_index);
-
   fiovb_io_result (*read_persistent_value)(struct fiovb_ops* ops,
                                            const char* name,
                                            size_t buffer_size,
