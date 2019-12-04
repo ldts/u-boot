@@ -31,6 +31,7 @@ struct sec_hash {
 #ifdef M4_HASH_DEBUG
 void print_hash(char *msg, struct hash *hash)
 {
+	int i;
 	printf("%s\n", msg);
 	printf("\t hash       => ");
 	for (i = 0; i < hash->len; i++)
@@ -42,7 +43,7 @@ void print_hash(char *msg, struct hash *hash)
 
 void print_secure_hash(char *msg, struct sec_hash *sec)
 {
-	print_hash(msg, sec->hash);
+	print_hash(msg, &sec->hash);
 	printf("\t payload_len : 0x%lx\n", sec->payload_len);
 }
 #else
