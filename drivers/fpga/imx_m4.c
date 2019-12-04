@@ -360,6 +360,12 @@ error:
 	memset((void *) M4_BASE, 0x00, M4_SIZE);
 	spi_flash_erase(flash, 0, M4_SIZE);
 
+	/* invalidate the RPMB information so we trigger an upgrade on the
+	   next boot avoiding an infinite loop */
+	memset(hash.value, 0x00, sizeof(hash.value));
+	hash.len = 0;
+	update_secure_hash(&hash, 0);
+
 	return ret;
 }
 
