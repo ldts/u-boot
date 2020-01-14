@@ -12,6 +12,11 @@
 
 extern enum bt_mode get_boot_mode(void);
 
+void __weak board_m4_restart(void)
+{
+	printf("stub: M4 restart\n");
+}
+
 enum m4_fw_state {m4_fw_boot, m4_fw_abort, m4_fw_upgrade};
 
 struct hash {
@@ -218,6 +223,11 @@ static int m4_do_upgrade(struct spi_flash *flash, const void *data,
 
 	printf("M4: Firmware upgraded from FIT...\n");
 
+	/* in dual boot mode, the M4 is probably already running the old
+	   software so let's restart it */
+	if (get_boot_mode() == DUAL_BOOT)
+		board_m4_restart();
+
 	return 0;
 }
 
@@ -269,14 +279,8 @@ retry_hash:
 	if (sec_hash.hash.len != hash->len ||
 	    memcmp(sec_hash.hash.value, hash->value, hash->len) ||
 	    sec_hash.payload_len != size) {
-		/* FIT firmware differs from installed firmware, upgrade */
-		if (get_boot_mode() == DUAL_BOOT) {
-			printf("M4: Invalid Boot Mode\n");
-			return -EINVAL;
-		}
 		*action = m4_fw_upgrade;
 	} else {
-		/* Current firmware matches requested firmware, boot it */
 		*action = m4_fw_boot;
 	}
 
@@ -293,6 +297,17 @@ static int m4_boot(struct spi_flash *flash, size_t size, struct hash *p)
 	struct hash hash;
 	int ret = 0;
 	size_t len;
+
+	/* 0) handle boot modes */
+	if (get_boot_mode() == DUAL_BOOT) {
+		printf("M4: dual boot: M4 already running, continue\n");
+		return 0;
+	}
+
+	if (readl(M4_BOOT_REG)) {
+		printf("M4: single boot: M4 already running, continue\n");
+		return 0;
+	}
 
 	/* 1) read the secure hash */
 	if (get_secure_hash(&sec_hash)) {
@@ -374,7 +389,7 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 {
 	const void *data = (const void *) bitstream;
 	struct spi_flash *flash = NULL;
-	enum m4_fw_state action;
+	enum m4_fw_state state;
 	struct hash hash;
 	int ret;
 
@@ -398,34 +413,27 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 		return ret;
 	}
 #endif
+	ret = m4_get_state(data, size, &hash, &state);
 
-	/* check if the M4 is already running */
-	if (readl(M4_BOOT_REG) != 0) {
-		printf("M4: already running, continue\n");
-		return 0;
+	if (state == m4_fw_abort) {
+		printf("M4: cant boot or upgrade the M4, rollback\n");
+		goto done;
 	}
 
-	ret = m4_get_state(data, size, &hash, &action);
-	switch (action) {
-	case m4_fw_abort:
-		printf("M4: cant boot or upgrade the M4, rollback\n");
-		return ret;
-	case m4_fw_boot:
-		printf("M4: already installed, booting\n");
-		break;
-	case m4_fw_upgrade:
+	if (state == m4_fw_upgrade) {
 		printf("M4: begin software upgrade\n");
 		ret = m4_do_upgrade(flash, data, size, &hash);
 		if (ret) {
 			printf("M4: upgrade failed, rollback\n");
 			return ret;
 		}
-		break;
+		goto boot;
 	}
 
-	/* boot the M4 stored in QSPI: the TA stored hash must match */
+	printf("M4: already installed\n");
+boot:
 	ret = m4_boot(flash, size, &hash);
-
+done:
 #if defined(CONFIG_FIOVB)
 	fiovb_ops_free(sec);
 #endif
