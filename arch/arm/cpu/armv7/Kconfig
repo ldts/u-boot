@@ -41,6 +41,13 @@ config ARMV7_PSCI
 	help
 	  Say Y here to enable PSCI support.
 
+config PSCI_RESET
+	bool "Use PSCI for reset and shutdown"
+	default y
+	depends on ARMV7_PSCI
+	help
+	  Use PSCI to reset the board
+
 config ARMV7_PSCI_NR_CPUS
 	int "Maximum supported CPUs for PSCI"
 	depends on ARMV7_NONSEC
