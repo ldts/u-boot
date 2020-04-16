@@ -79,12 +79,6 @@ static int hab_status(void)
 static int do_fiohab_close(cmd_tbl_t *cmdtp, int flag, int argc,
 			   char *const argv[])
 {
-	struct srk_fuse {
-		u32 bank;
-		u32 word;
-	} const srk_fuses[] = { SRK_FUSE_LIST };
-	char fuse_name[20] = { '\0' };
-	uint32_t fuse, fuse_env;
 	int i, ret;
 
 	if (argc != 1) {
@@ -100,36 +94,9 @@ static int do_fiohab_close(cmd_tbl_t *cmdtp, int flag, int argc,
 	if (hab_status())
 		return 1;
 
-	for (i = 0; i < ARRAY_SIZE(srk_fuses); i++) {
-		ret = fuse_read(srk_fuses[i].bank, srk_fuses[i].word, &fuse);
-		if (ret) {
-			printf("Secure boot fuse read error\n");
-			return 1;
-		}
-
-		sprintf(fuse_name, "srk_%d", i);
-		fuse_env = (uint32_t) env_get_hex(fuse_name, 0);
-		if (!fuse_env) {
-			printf("%s not in environment\n", fuse_name);
-			return 1;
-		}
-
-		if (fuse_env != fuse) {
-			printf("%s - programmed: 0x%x != expected: 0x%x \n",
-				fuse_name, fuse, fuse_env);
-			return 1;
-		}
-	}
-
 	ret = fiovb_provisioned();
 	if (ret) {
 		printf("Error, rpmb provisioned with test keys\n");
-		return 1;
-	}
-
-	ret = fuse_prog(SECURE_FUSE_BANK, SECURE_FUSE_WORD, SECURE_FUSE_VALUE);
-	if (ret) {
-		printf("Error writing the Secure Fuse\n");
 		return 1;
 	}
 
