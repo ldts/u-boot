@@ -14,6 +14,33 @@
 #include <asm/arch/sys_proto.h>
 #include <asm/mach-imx/hab.h>
 
+#if defined(CONFIG_FIOVB) && !defined(CONFIG_SPL)
+#include <fiovb.h>
+static int fiovb_provisioned(void)
+{
+	char len_str[32] = { '\0' };
+	struct fiovb_ops *sec;
+	int ret;
+
+	sec = fiovb_ops_alloc(0);
+	if (!sec)
+		return -EIO;
+
+	snprintf(len_str, sizeof(len_str), "%ld", (unsigned long) 0);
+	ret = sec->write_persistent_value(sec, "m4size", strlen(len_str) + 1,
+					 (uint8_t *) len_str);
+	fiovb_ops_free(sec);
+
+	/* if the RPMB is accessible, then we can't close the device */
+	if (ret == FIOVB_IO_RESULT_OK)
+		return -1;
+
+	return 0;
+}
+#else
+static int fiovb_provisioned(void) { return 0; }
+#endif
+
 #ifdef CONFIG_MX7ULP
 #define SRK_FUSE_LIST								\
 { 5, 0 }, { 5, 1 }, { 5, 2}, { 5, 3 }, { 5, 4 }, { 5, 5}, { 5, 6 }, { 5 ,7 },	\
@@ -43,7 +70,11 @@ static int hab_status(void)
 
 /* The fuses must have been programmed and their values set in the environment.
  * The fuse read operation returns a shadow value so a board reset is required
- * after the SRK fuses have been written
+ * after the SRK fuses have been written.
+ *
+ * On CAAM enabled boards (imx7, imx6 and others), the board should not be closed
+ * if RPMB keys have been provisioned as it would render it unavailable
+ * afterwards
  */
 static int do_fiohab_close(cmd_tbl_t *cmdtp, int flag, int argc,
 			   char *const argv[])
@@ -88,6 +119,12 @@ static int do_fiohab_close(cmd_tbl_t *cmdtp, int flag, int argc,
 				fuse_name, fuse, fuse_env);
 			return 1;
 		}
+	}
+
+	ret = fiovb_provisioned();
+	if (ret) {
+		printf("Error, rpmb provisioned with test keys\n");
+		return 1;
 	}
 
 	ret = fuse_prog(SECURE_FUSE_BANK, SECURE_FUSE_WORD, SECURE_FUSE_VALUE);
