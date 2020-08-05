@@ -385,6 +385,22 @@ error:
  * If upgrade fails due to hardware or security problems, do not boot a previous
  * firmware already resident in QSPI.
  */
+static inline void lock_sem42(void)
+{
+	printf("waiting for qspi lock\n");
+	do {
+		writeb(2, 0x4101b003);
+	} while (readb(0x4101b003) != 2);
+
+	printf("qspi lock taken\n");
+}
+
+static inline void unlock_sem42(void)
+{
+	writeb(0, 0x4101b003);
+	printf("qspi lock released\n");
+}
+
 int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 {
 	const void *data = (const void *) bitstream;
@@ -393,26 +409,35 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 	struct hash hash;
 	int ret;
 
+	lock_sem42();
+
+	printf("probe qspi\n");
 	flash = spi_flash_probe(CONFIG_ENV_SPI_BUS, CONFIG_ENV_SPI_CS,
 				 CONFIG_ENV_SPI_MAX_HZ, CONFIG_ENV_SPI_MODE);
 	if (!flash) {
 		printf("M4: Failed to probe QSPI\n");
+		unlock_sem42();
 		return -EIO;
 	}
 
 #if defined(CONFIG_FIOVB)
+	printf("initializing fiovb ops\n");
 	sec = fiovb_ops_alloc(0);
 	if (!sec) {
 		printf("M4: cant allocate secure operations, rollback\n");
+		unlock_sem42();
 		return -EIO;
 	}
 #else
+	printf("validating installed firmware\n");
 	ret = init_secure_hash(flash, size);
 	if (ret) {
 		printf("M4: cant validate the installed firmware\n");
+		unlock_sem42();
 		return ret;
 	}
 #endif
+	printf("getting the M4 state");
 	ret = m4_get_state(data, size, &hash, &state);
 
 	if (state == m4_fw_abort) {
@@ -425,6 +450,7 @@ int fpga_loadbitstream(int d, char *bitstream, size_t size, bitstream_type t)
 		ret = m4_do_upgrade(flash, data, size, &hash);
 		if (ret) {
 			printf("M4: upgrade failed, rollback\n");
+			unlock_sem42();
 			return ret;
 		}
 		goto boot;
@@ -437,6 +463,6 @@ done:
 #if defined(CONFIG_FIOVB)
 	fiovb_ops_free(sec);
 #endif
+	unlock_sem42();
 	return ret;
 }
-
