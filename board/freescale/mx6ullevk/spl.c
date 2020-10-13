@@ -11,6 +11,7 @@
 #include <asm/arch/imx-regs.h>
 #include <asm/arch/mx6ull_pins.h>
 #include <asm/mach-imx/iomux-v3.h>
+#include <asm/mach-imx/mxc_i2c.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -59,6 +60,22 @@ static void ccgr_init(void)
 	writel(0xFFFFFFFF, &ccm->CCGR7);
 }
 
+#define I2C_PAD_CTRL \
+	(PAD_CTL_PKE | PAD_CTL_PUE | PAD_CTL_PUS_100K_UP | PAD_CTL_SPEED_MED |\
+	 PAD_CTL_DSE_40ohm | PAD_CTL_HYS | PAD_CTL_ODE)
+
+static iomux_v3_cfg_t const i2c_pads[] = {
+	MX6_PAD_UART4_TX_DATA__I2C1_SCL | MUX_PAD_CTRL(I2C_PAD_CTRL),
+	MX6_PAD_UART4_RX_DATA__I2C1_SDA | MUX_PAD_CTRL(I2C_PAD_CTRL),
+	MX6_PAD_UART5_TX_DATA__I2C2_SCL | MUX_PAD_CTRL(I2C_PAD_CTRL),
+	MX6_PAD_UART5_RX_DATA__I2C2_SDA | MUX_PAD_CTRL(I2C_PAD_CTRL),
+};
+
+static void setup_iomux_i2c(void)
+{
+	imx_iomux_v3_setup_multiple_pads(i2c_pads, ARRAY_SIZE(i2c_pads));
+}
+
 void board_init_f(ulong dummy)
 {
 	/* DDR initialization done via DCD */
@@ -88,6 +105,7 @@ void board_init_f(ulong dummy)
 	/* setup MMC pins */
 	setup_iomux_mmc();
 #endif
+	setup_iomux_i2c();
 
 	/* load/boot image from boot device */
 	board_init_r(NULL, 0);
