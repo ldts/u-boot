@@ -291,7 +291,7 @@ static int rsa_verify_key(struct image_sign_info *info,
 			  const uint32_t key_len)
 {
 	int ret;
-#if !defined(USE_HOSTCC)
+#if !defined(USE_HOSTCC) && !(defined(CONFIG_SPL_RSA) && defined(CONFIG_IMX8MM))
 	struct udevice *mod_exp_dev;
 #endif
 	struct checksum_algo *checksum = info->checksum;
@@ -318,7 +318,7 @@ static int rsa_verify_key(struct image_sign_info *info,
 	uint8_t buf[sig_len];
 	hash_len = checksum->checksum_len;
 
-#if !defined(USE_HOSTCC)
+#if !defined(USE_HOSTCC) && !(defined(CONFIG_SPL_RSA) && defined(CONFIG_IMX8MM))
 	ret = uclass_get_device(UCLASS_MOD_EXP, 0, &mod_exp_dev);
 	if (ret) {
 		printf("RSA: Can't find Modular Exp implementation\n");
@@ -363,9 +363,12 @@ static int rsa_verify_with_keynode(struct image_sign_info *info,
 				   uint sig_len, int node)
 {
 	const void *blob = info->fdt_blob;
-	struct key_prop prop;
+	struct key_prop prop = { 0 };
 	int length;
 	int ret = 0;
+#if defined(CONFIG_SPL_RSA) && defined(CONFIG_IMX8MM)
+	uint64_t val;
+#endif
 
 	if (node < 0) {
 		debug("%s: Skipping invalid node", __func__);
@@ -380,6 +383,11 @@ static int rsa_verify_with_keynode(struct image_sign_info *info,
 	if (!prop.public_exponent || length < sizeof(uint64_t))
 		prop.public_exponent = NULL;
 
+#if defined(CONFIG_SPL_RSA) && defined(CONFIG_IMX8MM)
+	/* work around alignment issues */
+	memcpy(&val, prop.public_exponent, sizeof(val));
+	prop.public_exponent = (void *)&val;
+#endif
 	prop.exp_len = sizeof(uint64_t);
 
 	prop.modulus = fdt_getprop(blob, node, "rsa,modulus", NULL);
