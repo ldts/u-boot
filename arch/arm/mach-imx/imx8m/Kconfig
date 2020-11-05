@@ -2,8 +2,10 @@ if ARCH_IMX8M
 
 config IMX8M
 	bool
-	select HAS_CAAM
 	select ROM_UNIFIED_SECTIONS
+	help
+	  This architecture has CAAM but we have decided to unselect
+	  it so we can enable Foundries.io secure boot (spl + itb)
 
 config IMX8MQ
 	bool
