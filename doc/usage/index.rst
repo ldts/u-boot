@@ -29,3 +29,4 @@ Shell commands
    pstore
    sbi
    true
+   scp03
