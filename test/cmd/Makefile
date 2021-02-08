@@ -8,4 +8,5 @@ endif
 obj-y += mem.o
 obj-$(CONFIG_CMD_MEM_SEARCH) += mem_search.o
 obj-$(CONFIG_CMD_PWM) += pwm.o
+obj-$(CONFIG_CMD_SCP03) += scp03.o
 obj-y += setexpr.o
